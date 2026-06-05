@@ -23,6 +23,9 @@
       "esri/geometry/geometryEngine"
     ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
 
+      // 🎯 設定你目前在 GitHub 上的最新資料庫檔名
+      const targetTargetFile = "data.txt"; 
+
       const map = new Map({
         basemap: "osm" 
       });
@@ -30,13 +33,17 @@
       const view = new MapView({
         container: "viewDiv",
         map: map,
-        center: [120.212, 22.997], // 🎯 已經幫你精準定位在【台南火車站】
-        zoom: 15 // 放大地圖，看得更清楚
+        center: [120.212, 22.997], // 定位在台南火車站
+        zoom: 15 
       });
 
-      // 載入 GeoJSON 檔案
+      // 自動依據你的專案路徑去抓取檔案，避免 GitHub 網址路徑出錯
+      const currentRepoPath = window.location.pathname.split('/')[1];
+      const finalUrl = window.location.origin + "/" + currentRepoPath + "/" + targetTargetFile;
+
+      // 載入資料庫檔案
       const geojsonLayer = new GeoJSONLayer({
-        url: "./data.geojson", // 確保 cvs_data.geojson 跟 index.html 放在 GitHub 的同個資料夾
+        url: finalUrl, 
         renderer: {
           type: "simple",
           symbol: { type: "simple-marker", color: "gray", size: "6px" }
@@ -44,13 +51,12 @@
       });
       map.add(geojsonLayer);
 
-      // 【Debug 1】檢查有沒有成功讀取到你的 GeoJSON 檔案
+      // 檢查有沒有成功讀取到檔案（已修正為動態文字）
       geojsonLayer.load().then(function() {
-        console.log("GeoJSON 檔案載入成功！");
-        document.getElementById("errorMsg").innerHTML = "🟢 資料庫載入成功，請點擊地圖！";
+        document.getElementById("errorMsg").innerHTML = "🟢 資料庫（" + targetTargetFile + "）載入成功，請點擊地圖！";
       }).catch(function(error) {
-        console.error("GeoJSON 檔案載入失敗:", error);
-        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 cvs_data.geojson，請檢查 GitHub 檔名與路徑是否正確。";
+        console.error("載入失敗:", error);
+        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 " + targetTargetFile + "，請檢查後台檔案。";
       });
 
       // 監聽地圖點擊事件
@@ -58,32 +64,25 @@
         const clickPoint = event.mapPoint;
         view.graphics.removeAll(); 
 
-        // 標記目前點擊的位置
         const userGraphic = new Graphic({
           geometry: clickPoint,
           symbol: { type: "simple-marker", color: "blue", size: "12px", outline: { color: "white", width: 2 } }
         });
         view.graphics.add(userGraphic);
 
-        // 撈出便利商店資料
         geojsonLayer.queryFeatures().then(function(results) {
           let shops = results.features;
 
-          // 【Debug 2】檢查圖層裡到底有沒有資料
           if (shops.length === 0) {
-            document.getElementById("errorMsg").innerHTML = "⚠️ 警告：地圖上有圖層，但裡面沒有任何點的資料！";
+            document.getElementById("errorMsg").innerHTML = "⚠️ 警告：有讀到檔案，但裡面沒有任何點的資料！";
             return;
           }
 
-          // 計算距離
           shops.forEach(function(shop) {
             shop.distance = geometryEngine.distance(clickPoint, shop.geometry, "meters");
           });
 
-          // 排序
           shops.sort((a, b) => a.distance - b.distance);
-
-          // 取前三名
           const top3 = shops.slice(0, 3);
 
           const listDiv = document.getElementById("results");
@@ -91,7 +90,6 @@
           document.getElementById("errorMsg").innerHTML = "🟢 成功找出最近的 3 家店！";
 
           top3.forEach(function(shop, index) {
-            // 💡 如果你的欄位不是中文，程式會自動顯示欄位值，方便你 debug
             const name = shop.attributes.店名 || shop.attributes.NAME || shop.attributes.name || "未知名稱";
             const addr = shop.attributes.地址 || shop.attributes.ADDRESS || shop.attributes.addr || "未知地址";
             const dist = Math.round(shop.distance);
@@ -102,14 +100,12 @@
                 <span style="color:#666; font-size:12px;">${addr}</span>
               </div>`;
 
-            // 標記紅點
             const shopGraphic = new Graphic({
               geometry: shop.geometry,
               symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
             });
             view.graphics.add(shopGraphic);
 
-            // 畫虛線
             const polylineGraphic = new Graphic({
               geometry: {
                 type: "polyline",
@@ -120,7 +116,6 @@
             view.graphics.add(polylineGraphic);
           });
         }).catch(function(err) {
-          console.error("查詢失敗:", err);
           document.getElementById("errorMsg").innerHTML = "🔴 計算失敗，可能是座標系統衝突。";
         });
       });
