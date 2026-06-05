@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>期末報告：單機免雲端版（滑鼠點擊尋找最近3家店）</title>
+  <style>
+    html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
+    #infoPanel { position: absolute; top: 15px; left: 15px; z-index: 99; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); width: 280px; font-family: sans-serif; }
+    .result-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+  </style>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.29/"></script>
+
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/GeoJSONLayer",
+      "esri/Graphic",
+      "esri/geometry/geometryEngine"
+    ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
+
+      // 使用公開的 OpenStreetMap 底圖，完全免費、不需任何代碼金鑰
+      const map = new Map({
+        basemap: "osm" 
+      });
+
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [121.517, 25.047], // 預設中心（台北車站）
+        zoom: 13
+      });
+
+      // 載入剛剛從 ArcGIS Pro 匯出的 GeoJSON 檔案
+      const geojsonLayer = new GeoJSONLayer({
+        url: "./cvs_data.geojson", // 確保此檔案跟 html 放在同個資料夾
+        renderer: {
+          type: "simple",
+          symbol: { type: "simple-marker", color: "gray", size: "6px" } // 預設便利商店顯示為小灰點
+        }
+      });
+      map.add(geojsonLayer);
+
+      // 監聽地圖點擊事件
+      view.on("click", function(event) {
+        const clickPoint = event.mapPoint; // 取得滑鼠點擊的經緯度
+        
+        view.graphics.removeAll(); // 清除之前的點擊與路線標記
+
+        // 在滑鼠點擊處畫一個藍色的圈圈（代表目前位置）
+        const userGraphic = new Graphic({
+          geometry: clickPoint,
+          symbol: { type: "simple-marker", color: "blue", size: "12px", outline: { color: "white", width: 2 } }
+        });
+        view.graphics.add(userGraphic);
+
+        // 撈出這個 GeoJSON 圖層裡所有的便利商店資料
+        geojsonLayer.queryFeatures().then(function(results) {
+          let shops = results.features;
+
+          // 用瀏覽器前端的 CPU 幫你算每一家店跟點擊位置的直線距離
+          shops.forEach(function(shop) {
+            // 使用 geometryEngine 在前端即時計算距離 (單位：公尺)
+            shop.distance = geometryEngine.distance(clickPoint, shop.geometry, "meters");
+          });
+
+          // 排序：距離近的排前面
+          shops.sort((a, b) => a.distance - b.distance);
+
+          // 抓出前三名
+          const top3 = shops.slice(0, 3);
+
+          // 更新網頁左上角的 UI 文字
+          const listDiv = document.getElementById("results");
+          listDiv.innerHTML = "";
+
+          top3.forEach(function(shop, index) {
+            const name = shop.attributes.店名 || "便利商店"; // 根據你當初 Excel 的欄位名稱修改
+            const addr = shop.attributes.地址 || "未知地址";
+            const dist = Math.round(shop.distance);
+
+            // 1. 顯示在面板上
+            listDiv.innerHTML += `
+              <div class="result-item">
+                <b>${index + 1}. ${name}</b> (${dist} 公尺)<br>
+                <span style="color:#666; font-size:12px;">${addr}</span>
+              </div>`;
+
+            // 2. 在地圖上把這三家店標記成大紅點
+            const shopGraphic = new Graphic({
+              geometry: shop.geometry,
+              symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
+            });
+            view.graphics.add(shopGraphic);
+
+            // 3. 畫一條簡單的直線連過去（視覺效果加分）
+            const polylineGraphic = new Graphic({
+              geometry: {
+                type: "polyline",
+                paths: [[[clickPoint.longitude, clickPoint.latitude], [shop.geometry.longitude, shop.geometry.latitude]]]
+              },
+              symbol: { type: "simple-line", color: [255, 0, 0, 0.6], width: 2, style: "dash" }
+            });
+            view.graphics.add(polylineGraphic);
+          });
+        });
+      });
+    });
+  </script>
+</head>
+<body>
+  <div id="infoPanel">
+    <h3>期末系統展示</h3>
+    <p style="font-size: 13px; color: #555;">請在畫面上<b>任意點擊滑鼠</b>，系統將自動尋找距離該點最近的 3 家便利商店。</p>
+    <div id="results"></div>
+  </div>
+  <div id="viewDiv"></div>
+</body>
+</html>
