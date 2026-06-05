@@ -3,31 +3,61 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>期末報告：台南便利商店最終拯救版</title>
+  <title>期末報告：台南便利商店 TWD97 終極解套版</title>
   <style>
     html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
-    #infoPanel { position: absolute; top: 15px; left: 15px; z-index: 99; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); width: 290px; font-family: sans-serif; }
+    #infoPanel { position: absolute; top: 15px; left: 15px; z-index: 99; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); width: 280px; font-family: sans-serif; }
     .result-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
-    #errorMsg { font-weight: bold; font-size: 13px; margin-top: 5px; word-break: break-all; }
-    #backupArea { display: none; margin-top: 10px; }
-    #rawJsonInput { width: 100%; height: 60px; }
+    #errorMsg { font-weight: bold; font-size: 13px; margin-top: 5px; color: green; }
   </style>
 
   <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
   <script src="https://js.arcgis.com/4.29/"></script>
 
   <script>
-    // 全域變數，用來存放生資料
     let globalFeatures = [];
+
+    // 🧮 台灣標準 TWD97 二度分帶轉 WGS84 經緯度精準公式
+    function twd97_to_wgs84(x, y) {
+      let dx = x - 250000;
+      let dy = y;
+      let lon0 = 121 * Math.PI / 180;
+      let a = 6378137.0;
+      let b = 6356752.314245;
+      let k0 = 0.9999;
+      let e = Math.sqrt(1 - Math.pow(b / a, 2));
+      let e2 = Math.pow(e, 2) / (1 - Math.pow(e, 2));
+      let M = dy / k0;
+      let mu = M / (a * (1 - Math.pow(e, 2) / 4 - 3 * Math.pow(e, 4) / 64 - 5 * Math.pow(e, 6) / 256));
+      let e1 = (1 - Math.sqrt(1 - Math.pow(e, 2))) / (1 + Math.sqrt(1 - Math.pow(e, 2)));
+      let j1 = (3 * e1 / 2 - 27 * Math.pow(e1, 3) / 32);
+      let j2 = (21 * Math.pow(e1, 2) / 16 - 55 * Math.pow(e1, 4) / 32);
+      let j3 = (151 * Math.pow(e1, 3) / 96);
+      let fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu);
+      let C1 = e2 * Math.pow(Math.cos(fp), 2);
+      let T1 = Math.pow(Math.tan(fp), 2);
+      let R1 = a * (1 - Math.pow(e, 2)) / Math.pow(1 - Math.pow(e, 2) * Math.pow(Math.sin(fp), 2), 1.5);
+      let N1 = a / Math.sqrt(1 - Math.pow(e, 2) * Math.pow(Math.sin(fp), 2));
+      let D = dx / (N1 * k0);
+      let Q1 = N1 * Math.tan(fp) / R1;
+      let Q2 = (Math.pow(D, 2) / 2);
+      let Q3 = (5 + 3 * T1 + 10 * C1 - 4 * Math.pow(C1, 2) - 9 * e2) * Math.pow(D, 4) / 24;
+      let Q4 = (61 + 90 * T1 + 298 * C1 + 45 * Math.pow(T1, 2) - 252 * e2 - 3 * Math.pow(C1, 2)) * Math.pow(D, 6) / 720;
+      let lat = fp - Q1 * (Q2 - Q3 + Q4);
+      let Q5 = D;
+      let Q6 = (1 + 2 * T1 + C1) * Math.pow(D, 3) / 6;
+      let Q7 = (5 - 2 * C1 + 28 * T1 - 3 * Math.pow(C1, 2) + 8 * e2 + 24 * Math.pow(T1, 2)) * Math.pow(D, 5) / 120;
+      let lon = lon0 + (Q5 - Q6 + Q7) / Math.cos(fp);
+      return { lat: lat * 180 / Math.PI, lon: lon * 180 / Math.PI };
+    }
 
     require([
       "esri/Map",
       "esri/views/MapView",
       "esri/Graphic",
       "esri/geometry/Point",
-      "esri/geometry/geometryEngine",
-      "esri/geometry/support/webMercatorUtils"
-    ], function(Map, MapView, Graphic, Point, geometryEngine, webMercatorUtils) {
+      "esri/geometry/geometryEngine"
+    ], function(Map, MapView, Graphic, Point, geometryEngine) {
 
       const map = new Map({ basemap: "osm" });
       const view = new MapView({
@@ -37,48 +67,21 @@
         zoom: 15 
       });
 
-      // 🔄 大招：用底層 fetch 暴力讀取檔案，看看到底發生什麼事
+      // 暴力讀取後台的 json 檔案
       fetch("./cvs_data.json")
-        .then(res => {
-          if(!res.ok) throw new Error("HTTP 狀態碼錯誤 " + res.status);
-          return res.json();
-        })
+        .then(res => res.json())
         .then(data => {
-          // 解析各式各樣的 JSON 格式 (ArcGIS JSON 或 GeoJSON)
           globalFeatures = data.features || [];
-          if(globalFeatures.length > 0) {
-            document.getElementById("errorMsg").innerHTML = "🟢 暴力讀取成功！已載入 " + globalFeatures.length + " 筆資料。請點擊地圖！";
-            document.getElementById("errorMsg").style.color = "green";
-          } else {
-            throw new Error("檔案讀到了，但裡面找不到 features 欄位，格式可能錯了。");
-          }
+          document.getElementById("errorMsg").innerHTML = "🟢 資料庫連線成功！已載入 " + globalFeatures.length + " 筆資料。請點擊地圖！";
         })
         .catch(err => {
-          console.error(err);
-          document.getElementById("errorMsg").innerHTML = "🔴 自動讀檔失敗 (" + err.message + ")。<br>⚠️ 老哥別慌！已開啟下方的【備用手動輸入區】，上台簡報免驚！";
+          document.getElementById("errorMsg").innerHTML = "🔴 讀取失敗，請確認後台是否有 cvs_data.json";
           document.getElementById("errorMsg").style.color = "red";
-          document.getElementById("backupArea").style.display = "block";
         });
 
-      // 手動輸入按鈕事件
-      document.getElementById("loadJsonBtn").addEventListener("click", function() {
-        try {
-          const rawData = JSON.parse(document.getElementById("rawJsonInput").value);
-          globalFeatures = rawData.features || rawData;
-          alert("🟢 成功手動灌入 " + globalFeatures.length + " 筆資料！可以點擊地圖了！");
-          document.getElementById("errorMsg").innerHTML = "🟢 手動載入成功，請點擊地圖！";
-          document.getElementById("errorMsg").style.color = "green";
-        } catch(e) {
-          alert("JSON 格式不對，請確保複製了完整的檔案內容。");
-        }
-      });
-
-      // 監聽地圖點擊
+      // 監聽點擊事件
       view.on("click", function(event) {
-        if (globalFeatures.length === 0) {
-          alert("目前沒有任何便利商店資料可以計算，請先搞定資料庫！");
-          return;
-        }
+        if (globalFeatures.length === 0) return;
 
         const clickPoint = event.mapPoint;
         view.graphics.removeAll(); 
@@ -91,32 +94,30 @@
 
         let processedShops = [];
 
-        // 挨家挨戶解析座標並計算距離
         globalFeatures.forEach(function(f, idx) {
           let geom = f.geometry;
           if (!geom) return;
 
-          let x = geom.x || (geom.coordinates ? geom.coordinates[0] : null);
-          let y = geom.y || (geom.coordinates ? geom.coordinates[1] : null);
-          if (x === null || y === null) return;
+          // 讀取原始座標數字
+          let rawX = geom.x || (geom.coordinates ? geom.coordinates[0] : null);
+          let rawY = geom.y || (geom.coordinates ? geom.coordinates[1] : null);
+          if (rawX === null || rawY === null) return;
 
-          let shopPt;
-          // TWD97 座標自動辨識與轉換（十萬等級的數字）
-          if (x > 180 || x < -180) {
-            // 如果是 TWD97，強迫用逼近法轉經緯度以便計算，或直接建立點
-            // 為了簡化，直接建立對應點（這部分如果落差太大，表示當初投影沒選好）
-            shopPt = new Point({ x: x, y: y, spatialReference: { wkid: 3826 } });
-            // 將點擊的經緯度轉成同座標系
-            let t97Click = webMercatorUtils.geographicToWebMercator(clickPoint); 
-            // 這裡做一個簡單的幾何對齊
-          } else {
-            shopPt = new Point({ longitude: x, latitude: y });
+          let finalLon = rawX;
+          let finalLat = rawY;
+
+          // 🚨 核心公式判定：如果數字大於 180，代表是 TWD97 幾十萬的數字，立刻在前端強行校正歸位！
+          if (rawX > 180 || rawX < -180) {
+            let corrected = twd97_to_wgs84(rawX, rawY);
+            finalLon = corrected.lon;
+            finalLat = corrected.lat;
           }
 
-          // 計算距離
+          // 建立正確的經緯度點位
+          let shopPt = new Point({ longitude: finalLon, latitude: finalLat });
+
+          // 計算滑鼠點擊點與這家店的真實直線距離
           let dist = geometryEngine.distance(clickPoint, shopPt, "meters");
-          
-          // 擷取屬性
           let attrs = f.attributes || f.properties || {};
 
           processedShops.push({
@@ -127,7 +128,7 @@
           });
         });
 
-        // 排序
+        // 依據修正後的真實距離重新排序
         processedShops.sort((a, b) => a.distance - b.distance);
         const top3 = processedShops.slice(0, 3);
 
@@ -136,26 +137,24 @@
 
         top3.forEach(function(shop, index) {
           const dist = Math.round(shop.distance);
-          // 如果算出來距離幾十萬公尺，表示當初 ArcGIS Pro 匯出時座標系大錯亂
-          const distText = dist > 50000 ? "座標系偏移(請看ArcGIS Pro環境設定)" : dist + " 公尺";
 
           listDiv.innerHTML += `
             <div class="result-item">
-              <b>${index + 1}. ${shop.name}</b> (${distText})<br>
+              <b>${index + 1}. ${shop.name}</b> (${dist} 公尺)<br>
               <span style="color:#666; font-size:12px;">${shop.addr}</span>
             </div>`;
 
-          // 標記紅點
+          // 在正確的位置標記紅點
           view.graphics.add(new Graphic({
             geometry: shop.geometry,
             symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
           }));
 
-          // 畫線
+          // 畫出精確的導引虛線
           view.graphics.add(new Graphic({
             geometry: {
               type: "polyline",
-              paths: [[[clickPoint.longitude, clickPoint.latitude], [shop.geometry.longitude || shop.geometry.x, shop.geometry.latitude || shop.geometry.y]]]
+              paths: [[[clickPoint.longitude, clickPoint.latitude], [shop.geometry.longitude, shop.geometry.latitude]]]
             },
             symbol: { type: "simple-line", color: [255, 0, 0, 0.6], width: 2, style: "dash" }
           }));
@@ -168,14 +167,7 @@
   <div id="infoPanel">
     <h3>台南便利商店查詢系統</h3>
     <p style="font-size: 13px; color: #555;">已定位於台南火車站。請在畫面上<b>任意點擊滑鼠</b>進行測試。</p>
-    <div id="errorMsg" style="color: orange;">🟡 正在讀取 cvs_data.json...</div>
-    
-    <div id="backupArea">
-      <p style="font-size: 12px; color: #666; margin: 5px 0;">請用記事本打開你的 json 檔，把裡面的<b>所有文字全選複製</b>，貼在下面：</p>
-      <textarea id="rawJsonInput" placeholder="在此貼上 json 內容..."></textarea>
-      <button id="loadJsonBtn" style="width: 100%; margin-top: 5px; cursor: pointer;">手動載入資料</button>
-    </div>
-
+    <div id="errorMsg">🟡 正在載入資料庫...</div>
     <div id="results"></div>
   </div>
   <div id="viewDiv"></div>
