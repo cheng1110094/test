@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>期末報告：單機免雲端版（滑鼠點擊尋找最近3家店）</title>
+  <title>期末報告：台南便利商店地圖</title>
   <style>
     html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
     #infoPanel { position: absolute; top: 15px; left: 15px; z-index: 99; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); width: 280px; font-family: sans-serif; }
     .result-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+    #errorMsg { color: red; font-weight: bold; font-size: 13px; margin-top: 5px; }
   </style>
 
   <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
@@ -22,7 +23,6 @@
       "esri/geometry/geometryEngine"
     ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
 
-      // 使用公開的 OpenStreetMap 底圖，完全免費、不需任何代碼金鑰
       const map = new Map({
         basemap: "osm" 
       });
@@ -30,73 +30,86 @@
       const view = new MapView({
         container: "viewDiv",
         map: map,
-        center: [121.517, 25.047], // 預設中心（台北車站）
-        zoom: 13
+        center: [120.212, 22.997], // 🎯 已經幫你精準定位在【台南火車站】
+        zoom: 15 // 放大地圖，看得更清楚
       });
 
-      // 載入剛剛從 ArcGIS Pro 匯出的 GeoJSON 檔案
+      // 載入 GeoJSON 檔案
       const geojsonLayer = new GeoJSONLayer({
-        url: "./cvs_data.geojson", // 確保此檔案跟 html 放在同個資料夾
+        url: "./cvs_data.geojson", // 確保 cvs_data.geojson 跟 index.html 放在 GitHub 的同個資料夾
         renderer: {
           type: "simple",
-          symbol: { type: "simple-marker", color: "gray", size: "6px" } // 預設便利商店顯示為小灰點
+          symbol: { type: "simple-marker", color: "gray", size: "6px" }
         }
       });
       map.add(geojsonLayer);
 
+      // 【Debug 1】檢查有沒有成功讀取到你的 GeoJSON 檔案
+      geojsonLayer.load().then(function() {
+        console.log("GeoJSON 檔案載入成功！");
+        document.getElementById("errorMsg").innerHTML = "🟢 資料庫載入成功，請點擊地圖！";
+      }).catch(function(error) {
+        console.error("GeoJSON 檔案載入失敗:", error);
+        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 cvs_data.geojson，請檢查 GitHub 檔名與路徑是否正確。";
+      });
+
       // 監聽地圖點擊事件
       view.on("click", function(event) {
-        const clickPoint = event.mapPoint; // 取得滑鼠點擊的經緯度
-        
-        view.graphics.removeAll(); // 清除之前的點擊與路線標記
+        const clickPoint = event.mapPoint;
+        view.graphics.removeAll(); 
 
-        // 在滑鼠點擊處畫一個藍色的圈圈（代表目前位置）
+        // 標記目前點擊的位置
         const userGraphic = new Graphic({
           geometry: clickPoint,
           symbol: { type: "simple-marker", color: "blue", size: "12px", outline: { color: "white", width: 2 } }
         });
         view.graphics.add(userGraphic);
 
-        // 撈出這個 GeoJSON 圖層裡所有的便利商店資料
+        // 撈出便利商店資料
         geojsonLayer.queryFeatures().then(function(results) {
           let shops = results.features;
 
-          // 用瀏覽器前端的 CPU 幫你算每一家店跟點擊位置的直線距離
+          // 【Debug 2】檢查圖層裡到底有沒有資料
+          if (shops.length === 0) {
+            document.getElementById("errorMsg").innerHTML = "⚠️ 警告：地圖上有圖層，但裡面沒有任何點的資料！";
+            return;
+          }
+
+          // 計算距離
           shops.forEach(function(shop) {
-            // 使用 geometryEngine 在前端即時計算距離 (單位：公尺)
             shop.distance = geometryEngine.distance(clickPoint, shop.geometry, "meters");
           });
 
-          // 排序：距離近的排前面
+          // 排序
           shops.sort((a, b) => a.distance - b.distance);
 
-          // 抓出前三名
+          // 取前三名
           const top3 = shops.slice(0, 3);
 
-          // 更新網頁左上角的 UI 文字
           const listDiv = document.getElementById("results");
           listDiv.innerHTML = "";
+          document.getElementById("errorMsg").innerHTML = "🟢 成功找出最近的 3 家店！";
 
           top3.forEach(function(shop, index) {
-            const name = shop.attributes.店名 || "便利商店"; // 根據你當初 Excel 的欄位名稱修改
-            const addr = shop.attributes.地址 || "未知地址";
+            // 💡 如果你的欄位不是中文，程式會自動顯示欄位值，方便你 debug
+            const name = shop.attributes.店名 || shop.attributes.NAME || shop.attributes.name || "未知名稱";
+            const addr = shop.attributes.地址 || shop.attributes.ADDRESS || shop.attributes.addr || "未知地址";
             const dist = Math.round(shop.distance);
 
-            // 1. 顯示在面板上
             listDiv.innerHTML += `
               <div class="result-item">
                 <b>${index + 1}. ${name}</b> (${dist} 公尺)<br>
                 <span style="color:#666; font-size:12px;">${addr}</span>
               </div>`;
 
-            // 2. 在地圖上把這三家店標記成大紅點
+            // 標記紅點
             const shopGraphic = new Graphic({
               geometry: shop.geometry,
               symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
             });
             view.graphics.add(shopGraphic);
 
-            // 3. 畫一條簡單的直線連過去（視覺效果加分）
+            // 畫虛線
             const polylineGraphic = new Graphic({
               geometry: {
                 type: "polyline",
@@ -106,6 +119,9 @@
             });
             view.graphics.add(polylineGraphic);
           });
+        }).catch(function(err) {
+          console.error("查詢失敗:", err);
+          document.getElementById("errorMsg").innerHTML = "🔴 計算失敗，可能是座標系統衝突。";
         });
       });
     });
@@ -113,8 +129,9 @@
 </head>
 <body>
   <div id="infoPanel">
-    <h3>期末系統展示</h3>
-    <p style="font-size: 13px; color: #555;">請在畫面上<b>任意點擊滑鼠</b>，系統將自動尋找距離該點最近的 3 家便利商店。</p>
+    <h3>台南便利商店查詢系統</h3>
+    <p style="font-size: 13px; color: #555;">已定位於台南火車站。請在畫面上<b>任意點擊滑鼠</b>進行測試。</p>
+    <div id="errorMsg">🟡 正在載入資料庫...</div>
     <div id="results"></div>
   </div>
   <div id="viewDiv"></div>
