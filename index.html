@@ -23,9 +23,6 @@
       "esri/geometry/geometryEngine"
     ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
 
-      // 🎯 直接對齊你 GitHub 上的原始檔名 cvs_data.geojson
-      const finalUrl = "https://cheng1110094.github.io/test/cvs_data.geojson"; 
-
       const map = new Map({
         basemap: "osm" 
       });
@@ -37,8 +34,9 @@
         zoom: 15 
       });
 
+      // 🎯 這裡已經確實改回讀取 .json 檔案
       const geojsonLayer = new GeoJSONLayer({
-        url: finalUrl, 
+        url: "./cvs_data.json", 
         renderer: {
           type: "simple",
           symbol: { type: "simple-marker", color: "gray", size: "6px" }
@@ -46,15 +44,15 @@
       });
       map.add(geojsonLayer);
 
-      // 檢查有沒有成功讀取到檔案
+      // 檢查讀取狀態
       geojsonLayer.load().then(function() {
-        document.getElementById("errorMsg").innerHTML = "🟢 cvs_data.geojson 載入成功，請點擊地圖！";
+        document.getElementById("errorMsg").innerHTML = "🟢 cvs_data.json 載入成功，請點擊地圖！";
       }).catch(function(error) {
-        console.error("載入失敗:", error);
-        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 cvs_data.geojson，請確保後台檔案非空檔。";
+        console.error(error);
+        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 cvs_data.json，請確保檔案在同個資料夾。";
       });
 
-      // 監聽地圖點擊事件
+      // 監聽地圖點擊
       view.on("click", function(event) {
         const clickPoint = event.mapPoint;
         view.graphics.removeAll(); 
@@ -73,7 +71,7 @@
             return;
           }
 
-          // 🚨 座標防呆機制
+          // 座標系統檢查
           if (shops[0].geometry.x > 180 || shops[0].geometry.x < -180) {
             document.getElementById("errorMsg").innerHTML = "🔴 錯誤：偵測到 TWD97 座標！請回 ArcGIS Pro 把環境設定改為 GCS_WGS_1984 重新匯出！";
             return;
