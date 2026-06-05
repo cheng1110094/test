@@ -23,8 +23,8 @@
       "esri/geometry/geometryEngine"
     ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
 
-      // 🎯 設定你目前在 GitHub 上的最新資料庫檔名
-      const targetTargetFile = "data.txt"; 
+      // 🎯 這裡已經確實改回讀取 .geojson 檔案
+      const targetFile = "data.geojson"; 
 
       const map = new Map({
         basemap: "osm" 
@@ -37,26 +37,25 @@
         zoom: 15 
       });
 
-      // 自動依據你的專案路徑去抓取檔案，避免 GitHub 網址路徑出錯
+      // 自動解析 GitHub Pages 的專案名稱，動態拼接成正確的網址路徑
       const currentRepoPath = window.location.pathname.split('/')[1];
-      const finalUrl = window.location.origin + "/" + currentRepoPath + "/" + targetTargetFile;
+      const finalUrl = window.location.origin + "/" + currentRepoPath + "/" + targetFile;
 
-      // 載入資料庫檔案
       const geojsonLayer = new GeoJSONLayer({
         url: finalUrl, 
         renderer: {
           type: "simple",
-          symbol: { type: "simple-marker", color: "gray", size: "6px" }
+          symbol: { type: "simple-marker", color: "gray", size: "6px" } // 地圖上的便利商店預設為小灰點
         }
       });
       map.add(geojsonLayer);
 
-      // 檢查有沒有成功讀取到檔案（已修正為動態文字）
+      // 檢查有沒有成功讀取到 .geojson 檔案
       geojsonLayer.load().then(function() {
-        document.getElementById("errorMsg").innerHTML = "🟢 資料庫（" + targetTargetFile + "）載入成功，請點擊地圖！";
+        document.getElementById("errorMsg").innerHTML = "🟢 " + targetFile + " 載入成功，請點擊地圖！";
       }).catch(function(error) {
         console.error("載入失敗:", error);
-        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 " + targetTargetFile + "，請檢查後台檔案。";
+        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 " + targetFile + "，請確認後台檔案名稱與路徑。";
       });
 
       // 監聽地圖點擊事件
@@ -64,12 +63,14 @@
         const clickPoint = event.mapPoint;
         view.graphics.removeAll(); 
 
+        // 在滑鼠點擊的地方畫一個藍圈
         const userGraphic = new Graphic({
           geometry: clickPoint,
           symbol: { type: "simple-marker", color: "blue", size: "12px", outline: { color: "white", width: 2 } }
         });
         view.graphics.add(userGraphic);
 
+        // 開始向 GeoJSON 撈資料算距離
         geojsonLayer.queryFeatures().then(function(results) {
           let shops = results.features;
 
@@ -78,10 +79,18 @@
             return;
           }
 
+          // 🚨 防呆機制：檢查第一個點的座標。如果數字大於 180 (例如 17xxxx)，代表你匯出了 TWD97 座標
+          if (shops[0].geometry.x > 180 || shops[0].geometry.x < -180) {
+            document.getElementById("errorMsg").innerHTML = "🔴 錯誤：這不是標準經緯度！請回 ArcGIS Pro 把 Environments 的 Output Coordinate System 改為 GCS_WGS_1984 重新匯出！";
+            return;
+          }
+
+          // 用瀏覽器前端計算直線距離
           shops.forEach(function(shop) {
             shop.distance = geometryEngine.distance(clickPoint, shop.geometry, "meters");
           });
 
+          // 依距離由近到遠排序
           shops.sort((a, b) => a.distance - b.distance);
           const top3 = shops.slice(0, 3);
 
@@ -90,22 +99,26 @@
           document.getElementById("errorMsg").innerHTML = "🟢 成功找出最近的 3 家店！";
 
           top3.forEach(function(shop, index) {
-            const name = shop.attributes.店名 || shop.attributes.NAME || shop.attributes.name || "未知名稱";
-            const addr = shop.attributes.地址 || shop.attributes.ADDRESS || shop.attributes.addr || "未知地址";
+            // 欄位名稱防呆：自動適應中文「店名/地址」或英文「NAME/ADDRESS」
+            const name = shop.attributes.店名 || shop.attributes.NAME || shop.attributes.name || "便利商店";
+            const addr = shop.attributes.地址 || shop.attributes.ADDRESS || shop.attributes.addr || "點擊查看地圖";
             const dist = Math.round(shop.distance);
 
+            // 顯示在左側面板
             listDiv.innerHTML += `
               <div class="result-item">
                 <b>${index + 1}. ${name}</b> (${dist} 公尺)<br>
                 <span style="color:#666; font-size:12px;">${addr}</span>
               </div>`;
 
+            // 在地圖上把前三名標記成紅圈
             const shopGraphic = new Graphic({
               geometry: shop.geometry,
               symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
             });
             view.graphics.add(shopGraphic);
 
+            // 從點擊位置拉一條紅色虛線到便利商店（視覺效果加分）
             const polylineGraphic = new Graphic({
               geometry: {
                 type: "polyline",
@@ -116,7 +129,8 @@
             view.graphics.add(polylineGraphic);
           });
         }).catch(function(err) {
-          document.getElementById("errorMsg").innerHTML = "🔴 計算失敗，可能是座標系統衝突。";
+          console.error(err);
+          document.getElementById("errorMsg").innerHTML = "🔴 計算失敗。";
         });
       });
     });
