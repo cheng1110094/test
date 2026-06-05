@@ -2,174 +2,175 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>期末報告：台南便利商店 TWD97 終極解套版</title>
-  <style>
-    html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
-    #infoPanel { position: absolute; top: 15px; left: 15px; z-index: 99; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); width: 280px; font-family: sans-serif; }
-    .result-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
-    #errorMsg { font-weight: bold; font-size: 13px; margin-top: 5px; color: green; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>期末報告：東區便利商店查詢系統</title>
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
-  <script src="https://js.arcgis.com/4.29/"></script>
+  <style>
+    html, body { padding: 0; margin: 0; height: 100%; width: 100%; font-family: sans-serif; }
+    #map { height: 100%; width: 100%; z-index: 1; }
+    #panel { position: absolute; top: 15px; left: 15px; z-index: 999; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); width: 300px; }
+    .search-box { display: flex; margin-bottom: 10px; }
+    #addressInput { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px 0 0 4px; }
+    #searchBtn { padding: 8px 12px; background: #007bff; color: white; border: none; border-radius: 0 4px 4px 0; cursor: pointer; }
+    #searchBtn:hover { background: #0056b3; }
+    .result-item { padding: 10px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+    .result-item:last-child { border-bottom: none; }
+    .distance-tag { color: #ff5722; font-weight: bold; }
+    #status { font-weight: bold; font-size: 13px; margin-bottom: 8px; color: #666; }
+  </style>
+</head>
+<body>
+
+  <div id="panel">
+    <h3>東區便利商店查詢系統</h3>
+    <div class="search-box">
+      <input type="text" id="addressInput" placeholder="請輸入台南市東區地址..." value="台南市東區裕農路801號" />
+      <button id="searchBtn">搜尋</button>
+    </div>
+    <div id="status">💡 輸入地址或在地圖上任意點擊</div>
+    <div id="results"></div>
+  </div>
+
+  <div id="map"></div>
 
   <script>
-    let globalFeatures = [];
+    // 🎯 1. 這裡就是你們的店家資料庫！直接把東區 95 家店的 X, Y 座標補在這裡
+    // 💡 如果你的 X 是 120.xxx 就是經緯度；如果是 17xxxx 就是 TWD97，我都寫了自動判定，免煩惱！
+    const stores = [
+      { name: "全家裕義店", address: "台南市東區裕義路256號", x: 120.2520, y: 22.9912 },
+      { name: "7-11裕平店", address: "台南市東區裕平路112號", x: 120.2524, y: 22.9880 },
+      { name: "全家裕聖店", address: "台南市東區裕信路189號", x: 120.2529, y: 22.9835 },
+      // 填寫範例（直接貼上你們的其他店家）：
+      // { name: "店名", address: "地址", x: 座標X, y: 座標Y },
+    ];
 
-    // 🧮 台灣標準 TWD97 二度分帶轉 WGS84 經緯度精準公式
+    // 🧮 TWD97 轉經緯度物理外掛公式 (萬一你們拿到的是幾十萬的二度分帶座標)
     function twd97_to_wgs84(x, y) {
-      let dx = x - 250000;
-      let dy = y;
-      let lon0 = 121 * Math.PI / 180;
-      let a = 6378137.0;
-      let b = 6356752.314245;
-      let k0 = 0.9999;
-      let e = Math.sqrt(1 - Math.pow(b / a, 2));
-      let e2 = Math.pow(e, 2) / (1 - Math.pow(e, 2));
-      let M = dy / k0;
-      let mu = M / (a * (1 - Math.pow(e, 2) / 4 - 3 * Math.pow(e, 4) / 64 - 5 * Math.pow(e, 6) / 256));
+      if (x < 180 && x > -180) return { lat: y, lon: x }; // 本來就是經緯度就不用轉
+      let dx = x - 250000; let dy = y; let lon0 = 121 * Math.PI / 180;
+      let a = 6378137.0; let b = 6356752.314245; let k0 = 0.9999;
+      let e = Math.sqrt(1 - Math.pow(b / a, 2)); let e2 = Math.pow(e, 2) / (1 - Math.pow(e, 2));
+      let M = dy / k0; let mu = M / (a * (1 - Math.pow(e, 2) / 4 - 3 * Math.pow(e, 4) / 64 - 5 * Math.pow(e, 6) / 256));
       let e1 = (1 - Math.sqrt(1 - Math.pow(e, 2))) / (1 + Math.sqrt(1 - Math.pow(e, 2)));
-      let j1 = (3 * e1 / 2 - 27 * Math.pow(e1, 3) / 32);
-      let j2 = (21 * Math.pow(e1, 2) / 16 - 55 * Math.pow(e1, 4) / 32);
-      let j3 = (151 * Math.pow(e1, 3) / 96);
+      let j1 = (3 * e1 / 2 - 27 * Math.pow(e1, 3) / 32); let j2 = (21 * Math.pow(e1, 2) / 16 - 55 * Math.pow(e1, 4) / 32); let j3 = (151 * Math.pow(e1, 3) / 96);
       let fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu);
-      let C1 = e2 * Math.pow(Math.cos(fp), 2);
-      let T1 = Math.pow(Math.tan(fp), 2);
+      let C1 = e2 * Math.pow(Math.cos(fp), 2); let T1 = Math.pow(Math.tan(fp), 2);
       let R1 = a * (1 - Math.pow(e, 2)) / Math.pow(1 - Math.pow(e, 2) * Math.pow(Math.sin(fp), 2), 1.5);
       let N1 = a / Math.sqrt(1 - Math.pow(e, 2) * Math.pow(Math.sin(fp), 2));
-      let D = dx / (N1 * k0);
-      let Q1 = N1 * Math.tan(fp) / R1;
-      let Q2 = (Math.pow(D, 2) / 2);
+      let D = dx / (N1 * k0); let Q1 = N1 * Math.tan(fp) / R1; let Q2 = (Math.pow(D, 2) / 2);
       let Q3 = (5 + 3 * T1 + 10 * C1 - 4 * Math.pow(C1, 2) - 9 * e2) * Math.pow(D, 4) / 24;
       let Q4 = (61 + 90 * T1 + 298 * C1 + 45 * Math.pow(T1, 2) - 252 * e2 - 3 * Math.pow(C1, 2)) * Math.pow(D, 6) / 720;
-      let lat = fp - Q1 * (Q2 - Q3 + Q4);
-      let Q5 = D;
-      let Q6 = (1 + 2 * T1 + C1) * Math.pow(D, 3) / 6;
+      let lat = fp - Q1 * (Q2 - Q3 + Q4); let Q5 = D; let Q6 = (1 + 2 * T1 + C1) * Math.pow(D, 3) / 6;
       let Q7 = (5 - 2 * C1 + 28 * T1 - 3 * Math.pow(C1, 2) + 8 * e2 + 24 * Math.pow(T1, 2)) * Math.pow(D, 5) / 120;
       let lon = lon0 + (Q5 - Q6 + Q7) / Math.cos(fp);
       return { lat: lat * 180 / Math.PI, lon: lon * 180 / Math.PI };
     }
 
-    require([
-      "esri/Map",
-      "esri/views/MapView",
-      "esri/Graphic",
-      "esri/geometry/Point",
-      "esri/geometry/geometryEngine"
-    ], function(Map, MapView, Graphic, Point, geometryEngine) {
+    // 📐 哈弗辛公式 (Haversine) 算出地表兩點間真實的直線公里數
+    function getDistance(lat1, lon1, lat2, lon2) {
+      let R = 6371000; // 地球半徑 (公尺)
+      let dLat = (lat2 - lat1) * Math.PI / 180;
+      let dLon = (lon2 - lon1) * Math.PI / 180;
+      let a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+      let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c; 
+    }
 
-      const map = new Map({ basemap: "osm" });
-      const view = new MapView({
-        container: "viewDiv",
-        map: map,
-        center: [120.212, 22.997], // 台南火車站
-        zoom: 15 
+    // 2. 初始化免費地圖 (預設中心定位在台南東區虎尾寮)
+    const map = L.map('map').setView([22.988, 120.252], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // 建立兩個圖層群組，用來放每次點擊產生的新圖示，方便清除舊標記
+    let userGroup = L.layerGroup().addTo(map);
+    let storeGroup = L.layerGroup().addTo(map);
+
+    // 先把這 95 家店的基本位置用小灰色圈圈全部點在地圖上
+    stores.forEach(s => {
+      let pos = twd97_to_wgs84(s.x, s.y);
+      s.correctedLat = pos.lat;
+      s.correctedLon = pos.lon;
+      L.circleMarker([pos.lat, pos.lon], { radius: 4, color: 'gray', fillColor: 'gray', fillOpacity: 0.5 }).addTo(map).bindPopup(`<b>${s.name}</b>`);
+    });
+
+    // 核心邏輯：給予一個中心點座標，找出最近 3 家店並畫線
+    function findNearestThree(centerLat, centerLon) {
+      userGroup.clearLayers();
+      storeGroup.clearLayers();
+
+      // 在使用者位置插一支藍色圖釘
+      L.marker([centerLat, centerLon]).addTo(userGroup).bindPopup("您的位置").openPopup();
+
+      // 計算每家店跟核心點的距離
+      stores.forEach(s => {
+        s.currentDistance = getDistance(centerLat, centerLon, s.correctedLat, s.correctedLon);
       });
 
-      // 暴力讀取後台的 json 檔案
-      fetch("./cvs_data.json")
+      // 排序
+      const sortedStores = [...stores].sort((a, b) => a.currentDistance - b.currentDistance);
+      const top3 = sortedStores.slice(0, 3);
+
+      // 渲染左側清單與地圖視覺效果
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "";
+
+      top3.forEach((shop, index) => {
+        const dist = Math.round(shop.currentDistance);
+        
+        // 1. 寫入左側白底面板
+        resultsDiv.innerHTML += `
+          <div class="result-item">
+            <b>${index + 1}. ${shop.name}</b> (<span class="distance-tag">${dist} 公尺</span>)<br>
+            <span style="color:#666; font-size:12px;">${shop.address}</span>
+          </div>`;
+
+        // 2. 在地圖上把前三名插上漂亮的紅色圓圈
+        L.circleMarker([shop.correctedLat, shop.correctedLon], { radius: 8, color: 'red', fillColor: '#f03', fillOpacity: 0.8 })
+          .addTo(storeGroup)
+          .bindPopup(`<b>${shop.name}</b><br>距離: ${dist}公尺`);
+
+        // 3. 從使用者中心點拉一條帥氣的紅色虛線到便利商店
+        L.polyline([[centerLat, centerLon], [shop.correctedLat, shop.correctedLon]], { color: 'red', weight: 2, dashArray: '5, 5' }).addTo(storeGroup);
+      });
+
+      // 讓地圖視野自動縮放到剛好包住這四個點
+      const group = new L.featureGroup([L.marker([centerLat, centerLon]), ...top3.map(s => L.marker([s.correctedLat, s.correctedLon]))]);
+      map.fitBounds(group.getBounds().pad(0.2));
+    }
+
+    // 🖱 監聽滑鼠直接點擊地圖事件
+    map.on('click', function(e) {
+      document.getElementById("status").innerHTML = "🟢 已透過滑鼠點擊定位！";
+      findNearestThree(e.latlng.lat, e.latlng.lng);
+    });
+
+    // 🔍 監聽地址搜尋按鈕 (使用 OpenStreetMap 免費無憑證的 Nominatim 定位服務)
+    document.getElementById("searchBtn").addEventListener("click", function() {
+      const address = document.getElementById("addressInput").value;
+      if (!address) return alert("請輸入地址！");
+      
+      document.getElementById("status").innerHTML = "🟡 正在搜尋地址座標...";
+
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`)
         .then(res => res.json())
-        .then(data => {
-          globalFeatures = data.features || [];
-          document.getElementById("errorMsg").innerHTML = "🟢 資料庫連線成功！已載入 " + globalFeatures.length + " 筆資料。請點擊地圖！";
+        .then(results => {
+          if (results.length === 0) {
+            document.getElementById("status").innerHTML = "🔴 找不到這個地址，請手動點擊地圖。";
+            return alert("找不到該地址，請確保輸入正確（包含縣市名）！");
+          }
+          const lat = parseFloat(results[0].lat);
+          const lon = parseFloat(results[0].lon);
+          document.getElementById("status").innerHTML = "🟢 地址搜尋成功！";
+          findNearestThree(lat, lon);
         })
         .catch(err => {
-          document.getElementById("errorMsg").innerHTML = "🔴 讀取失敗，請確認後台是否有 cvs_data.json";
-          document.getElementById("errorMsg").style.color = "red";
+          document.getElementById("status").innerHTML = "🔴 定位服務忙碌中，請直接點擊地圖。";
         });
-
-      // 監聽點擊事件
-      view.on("click", function(event) {
-        if (globalFeatures.length === 0) return;
-
-        const clickPoint = event.mapPoint;
-        view.graphics.removeAll(); 
-
-        // 畫點擊的藍點
-        view.graphics.add(new Graphic({
-          geometry: clickPoint,
-          symbol: { type: "simple-marker", color: "blue", size: "12px", outline: { color: "white", width: 2 } }
-        }));
-
-        let processedShops = [];
-
-        globalFeatures.forEach(function(f, idx) {
-          let geom = f.geometry;
-          if (!geom) return;
-
-          // 讀取原始座標數字
-          let rawX = geom.x || (geom.coordinates ? geom.coordinates[0] : null);
-          let rawY = geom.y || (geom.coordinates ? geom.coordinates[1] : null);
-          if (rawX === null || rawY === null) return;
-
-          let finalLon = rawX;
-          let finalLat = rawY;
-
-          // 🚨 核心公式判定：如果數字大於 180，代表是 TWD97 幾十萬的數字，立刻在前端強行校正歸位！
-          if (rawX > 180 || rawX < -180) {
-            let corrected = twd97_to_wgs84(rawX, rawY);
-            finalLon = corrected.lon;
-            finalLat = corrected.lat;
-          }
-
-          // 建立正確的經緯度點位
-          let shopPt = new Point({ longitude: finalLon, latitude: finalLat });
-
-          // 計算滑鼠點擊點與這家店的真實直線距離
-          let dist = geometryEngine.distance(clickPoint, shopPt, "meters");
-          let attrs = f.attributes || f.properties || {};
-
-          processedShops.push({
-            geometry: shopPt,
-            name: attrs.店名 || attrs.NAME || attrs.name || "便利商店(" + idx + ")",
-            addr: attrs.地址 || attrs.ADDRESS || attrs.addr || "台南市",
-            distance: dist
-          });
-        });
-
-        // 依據修正後的真實距離重新排序
-        processedShops.sort((a, b) => a.distance - b.distance);
-        const top3 = processedShops.slice(0, 3);
-
-        const listDiv = document.getElementById("results");
-        listDiv.innerHTML = "";
-
-        top3.forEach(function(shop, index) {
-          const dist = Math.round(shop.distance);
-
-          listDiv.innerHTML += `
-            <div class="result-item">
-              <b>${index + 1}. ${shop.name}</b> (${dist} 公尺)<br>
-              <span style="color:#666; font-size:12px;">${shop.addr}</span>
-            </div>`;
-
-          // 在正確的位置標記紅點
-          view.graphics.add(new Graphic({
-            geometry: shop.geometry,
-            symbol: { type: "simple-marker", color: "red", size: "14px", outline: { color: "white", width: 2 } }
-          }));
-
-          // 畫出精確的導引虛線
-          view.graphics.add(new Graphic({
-            geometry: {
-              type: "polyline",
-              paths: [[[clickPoint.longitude, clickPoint.latitude], [shop.geometry.longitude, shop.geometry.latitude]]]
-            },
-            symbol: { type: "simple-line", color: [255, 0, 0, 0.6], width: 2, style: "dash" }
-          }));
-        });
-      });
     });
   </script>
-</head>
-<body>
-  <div id="infoPanel">
-    <h3>台南便利商店查詢系統</h3>
-    <p style="font-size: 13px; color: #555;">已定位於台南火車站。請在畫面上<b>任意點擊滑鼠</b>進行測試。</p>
-    <div id="errorMsg">🟡 正在載入資料庫...</div>
-    <div id="results"></div>
-  </div>
-  <div id="viewDiv"></div>
 </body>
 </html>
