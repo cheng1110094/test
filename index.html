@@ -23,8 +23,8 @@
       "esri/geometry/geometryEngine"
     ], function(Map, MapView, GeoJSONLayer, Graphic, geometryEngine) {
 
-      // 🎯 網址已經直接寫死，絕對不會再找錯地方
-      const finalUrl = "https://cheng1110094.github.io/test/data.geojson"; 
+      // 🎯 直接對齊你 GitHub 上的原始檔名 cvs_data.geojson
+      const finalUrl = "https://cheng1110094.github.io/test/cvs_data.geojson"; 
 
       const map = new Map({
         basemap: "osm" 
@@ -48,10 +48,10 @@
 
       // 檢查有沒有成功讀取到檔案
       geojsonLayer.load().then(function() {
-        document.getElementById("errorMsg").innerHTML = "🟢 data.geojson 載入成功，請點擊地圖！";
+        document.getElementById("errorMsg").innerHTML = "🟢 cvs_data.geojson 載入成功，請點擊地圖！";
       }).catch(function(error) {
         console.error("載入失敗:", error);
-        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 data.geojson，請確保後台檔案名稱為 data.geojson 且非空檔。";
+        document.getElementById("errorMsg").innerHTML = "🔴 錯誤：找不到 cvs_data.geojson，請確保後台檔案非空檔。";
       });
 
       // 監聽地圖點擊事件
