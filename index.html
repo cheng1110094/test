@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>期末報告：東區便利商店查詢系統 (最終完美版)</title>
+  <title>東區便利商店查詢系統</title>
   
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -160,8 +160,8 @@
     stores.forEach(s => {
       L.circleMarker([s.y, s.x], { 
         radius: 4, 
-        color: '#6c757d', 
-        fillColor: '#6c757d', 
+        color: '#7d6c6c', 
+        fillColor: '##7d6c6c', 
         fillOpacity: 0.4 
       }).addTo(map).bindPopup(`<b>${s.name}</b><br>${s.address}`);
     });
